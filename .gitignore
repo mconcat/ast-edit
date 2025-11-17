@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+.env*
+.venv/
+.cache/
+
+# Data artifacts
+data/raw/*
+!data/raw/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+trajectories/raw/*
+!trajectories/raw/.gitkeep
+
+logs/*
+!logs/sandbox/.gitkeep
+!logs/actors/.gitkeep
+
+reports/datasets/*
+!reports/datasets/.gitkeep
+
+# Dataset contents
+# keep metadata + scripts in git but exclude downloaded corpora
+
+dataset/*/content/
+!dataset/*/content/.gitkeep
+
+# Local tooling
+.mypy_cache/
+.pytest_cache/
+

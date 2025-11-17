@@ -1,0 +1,72 @@
+commitpackft:
+  source_type: huggingface
+  uri: bigcode/commitpackft
+  subset: filtered
+  revision: main
+  license: BigCode-OpenRAIL-M
+  approx_size_gb: 2.0
+  approx_records: 325000
+  languages: [python, javascript, typescript, java, cpp, go, rust]
+  homepage: https://huggingface.co/datasets/bigcode/commitpackft
+
+oce_dataft:
+  source_type: huggingface
+  uri: opencodeinterpreter/oce-edit-data
+  subset: OCEDataFT
+  revision: main
+  license: Apache-2.0
+  approx_size_gb: 0.3
+  approx_records: 20000
+  languages: [python, javascript, typescript, java, cpp]
+  homepage: https://huggingface.co/datasets/opencodeinterpreter/oce-edit-data
+
+editpackft:
+  source_type: huggingface
+  uri: opencodeinterpreter/editpackft
+  revision: main
+  license: BigCode-OpenRAIL-M
+  approx_size_gb: 1.0
+  approx_records: 180000
+  languages: [python, javascript, java]
+  homepage: https://huggingface.co/datasets/opencodeinterpreter/editpackft
+
+canitedit:
+  source_type: huggingface
+  uri: opencodeinterpreter/canitedit
+  revision: main
+  license: Apache-2.0
+  approx_size_gb: 0.05
+  approx_records: 105
+  languages: [python]
+  homepage: https://huggingface.co/datasets/opencodeinterpreter/canitedit
+
+agentpack:
+  source_type: huggingface
+  uri: opencodeinterpreter/agentpack
+  revision: main
+  license: CC-BY-SA-4.0
+  approx_size_gb: 5.0
+  approx_records: 1300000
+  languages: [python, javascript, typescript, go, rust, cpp, java]
+  homepage: https://huggingface.co/datasets/opencodeinterpreter/agentpack
+
+marv:
+  source_type: huggingface
+  uri: amazon-science/marv
+  revision: main
+  license: Apache-2.0
+  approx_size_gb: 0.02
+  approx_records: 693
+  languages: [java]
+  homepage: https://huggingface.co/datasets/amazon-science/marv
+
+smellycode:
+  source_type: http
+  uri: https://github.com/smellycode/SmellyCodeDataset/archive/refs/heads/main.zip
+  revision: github-main
+  license: GPL-3.0-only
+  approx_size_gb: 0.5
+  approx_records: 10000
+  languages: [java, python, javascript, cpp]
+  homepage: https://github.com/smellycode/SmellyCodeDataset
+
