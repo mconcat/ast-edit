@@ -21,19 +21,24 @@
 ```
 .
 ├── data/
-│   ├── raw/
-│   │   ├── commitpackft/
-│   │   ├── oce_dataft/
-│   │   ├── editpackft/
-│   │   ├── agentpack/
-│   │   ├── marv/
-│   │   └── smellycode/
-│   └── processed/
+│   ├── raw/          # Placeholder for future normalized data
+│   └── processed/    # Placeholder for language-specific splits
 │       ├── python/
 │       ├── javascript/
 │       └── java/
+├── dataset/          # Per-dataset download scripts and raw content
+│   ├── agentpack/
+│   │   ├── download.py
+│   │   ├── README.md
+│   │   └── content/  # Downloaded archives (git-ignored)
+│   ├── canitedit/
+│   ├── commitpackft/
+│   ├── editpackft/
+│   ├── marv/
+│   ├── oce_dataft/
+│   └── smellycode/
 ├── scripts/
-│   ├── ingest_commitpack.py
+│   ├── ingest_commitpack.py  # Normalization scripts (stubs)
 │   ├── ingest_oce.py
 │   ├── ingest_editpack.py
 │   ├── ingest_agentpack.py
@@ -43,22 +48,26 @@
 │   └── report_dataset_stats.py
 ├── src/
 │   ├── data/
-│   │   ├── schemas.py
-│   │   └── validators.py
+│   │   ├── schemas.py        # Pydantic models (DatasetMetadata, NormalizedRecord, DatasetConfig)
+│   │   └── download_utils.py # Download helpers with security hardening
 │   ├── state/
-│   │   └── manager.py
+│   │   └── manager.py        # (not yet implemented)
 │   ├── sandbox/
-│   │   └── runner.py
+│   │   └── runner.py         # (not yet implemented)
 │   ├── actors/
-│   │   ├── vllm_client.py
-│   │   └── actor_loop.py
+│   │   ├── vllm_client.py    # (not yet implemented)
+│   │   └── actor_loop.py     # (not yet implemented)
 │   └── teachers/
-│       └── srl_teacher.py
+│       └── srl_teacher.py    # (not yet implemented)
+├── tests/
+│   ├── conftest.py
+│   ├── test_schemas.py
+│   └── test_download_utils.py
 └── configs/
-    ├── datasets.yaml
-    ├── sandbox.yaml
-    ├── vllm_actors.yaml
-    └── teacher_prompts.yaml
+    ├── datasets.yaml         # Dataset catalog with 7 entries
+    ├── sandbox.yaml          # (not yet created)
+    ├── vllm_actors.yaml      # (not yet created)
+    └── teacher_prompts.yaml  # (not yet created)
 ```
 
 ## 3. Data Ingestion & Processing
@@ -76,12 +85,22 @@ Each ingestion script writes a `_meta.json` containing:
 ```
 - Schema validation with `pydantic` models defined in `src/data/schemas.py`.
 - Unit tests ensure detection of missing or malformed fields.
+- **Test Infrastructure (Implemented):**
+  - `tests/test_schemas.py`: validates schema field defaults, language normalization, and metadata serialization
+  - `tests/test_download_utils.py`: security-focused tests for URL validation, checksum verification, path traversal prevention, symlink blocking, and directory hashing
 
 ### 3.2 Ingestion Steps (per dataset)
-1. **Download/Sync** using authenticated URLs when required (AgentPack may need credentials; store in `.env` + use `dotenv`) directly onto the learner/actor machine’s HDD array (no cloud buckets) so every dataset stays co-located with the GPUs.
+1. **Download/Sync** using authenticated URLs when required (AgentPack may need credentials; store in `.env` + use `dotenv`) directly onto the learner/actor machine's HDD array (no cloud buckets) so every dataset stays co-located with the GPUs.
+   - Implementation uses `src/data/download_utils.py` with security hardening:
+     - URL scheme validation (HTTP/HTTPS only)
+     - SSRF prevention (blocks private/loopback/link-local IPs)
+     - Path traversal protection for archive extraction
+     - Symlink attack prevention
+     - Archive bomb protection (50GB size limit)
 2. **Verify Integrity** via SHA256 + size comparison against official manifest.
-3. **Normalize** into common JSONL structure: `{ "instruction": str, "pre": str, "post": str, "language": str, "tags": [str] }`.
-4. **Store** raw archives untouched under `data/raw/<dataset>/source/` and normalized JSONL under `data/raw/<dataset>/normalized/`.
+3. **Normalize** into common JSONL structure: `{ "instruction": str, "pre": str, "post": str, "language": str, "tags": [str], "metadata": {...} }`.
+   - The `metadata` field (dict) captures dataset-specific structured data such as test assets, commit provenance, smell types, etc.
+4. **Store** raw archives untouched under `dataset/<name>/content/` and normalized JSONL under `data/raw/<dataset>/normalized/` (once normalization scripts are implemented).
 5. **Process** into splits by language using heuristics:
    - Use file extensions + tree-sitter detection to confirm language.
    - Deduplicate identical `(instruction, pre)` pairs across datasets.
@@ -200,6 +219,14 @@ Each ingestion script writes a `_meta.json` containing:
 ## 9. Security & Compliance Checklist
 - Sandbox uses allowlist of binaries (`ast-grep`, `python`, `pytest`).
 - All downloads hashed; license stored in metadata.
+- **Download Security (Implemented):**
+  - URL scheme validation (HTTP/HTTPS only, rejects file://, ftp://, etc.)
+  - SSRF prevention: blocks requests to private (RFC1918), loopback (127.0.0.0/8), link-local (169.254.0.0/16), and reserved IP ranges
+  - Path traversal protection: validates all archive members stay within destination directory
+  - Symlink attack prevention: rejects symlinks and hardlinks in tar archives
+  - Archive bomb protection: enforces 50GB uncompressed size limit
+  - Timeout enforcement: 5-minute timeout for HTTP downloads
+  - Test coverage: comprehensive security tests in `tests/test_download_utils.py`
 - Secrets (dataset creds, API keys) stored via git-ignored `.env.local` files on each learner/actor node. Because traffic flows directly between the local machines and the teacher cloud box (no third-party services), we do not need Vault or any external secret manager for this sprint.
 
 ## 10. Week-1/Week-2 Timeline
