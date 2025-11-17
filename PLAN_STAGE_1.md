@@ -8,13 +8,13 @@
   - Sandbox runner executes ast-grep YAML + CLI rewrites deterministically inside a jailed FS, with log capture + unit tests.
   - State manager reads/writes the structured interleaved-thinking state (<400–800 tokens) and enforces caps.
   - vLLM actors can serve quantized Qwen3-14B via HTTP/gRPC with health checks, integrated with the state manager and sandbox.
-  - SRL teacher PoC (GLM-4.6/MiniMax M2/MiniMax K2) produces verified `<think>/<action>/<state_update>` trajectories with reward annotations.
+  - SRL teacher PoC (MiniMax M2 primary, GLM-4.6 fallback) produces verified `<think>/<action>/<state_update>` trajectories with reward annotations.
 
 ## 1. Environment & Hardware
 - **Learner Box:** `2 × RTX 5090` (FP16 + ZeRO-3). Used for offline SFT prep (if needed) and SRL fine-tuning once data exists.
 - **Actor Boxes:** `3 × RTX 3090`, each running a vLLM instance hosting quantized Qwen3-14B (4- or 8-bit) plus ast-grep sandbox processes.
-- **Teacher Cloud GPU:** _UNKNOWN_. Need confirmation on preferred cloud provider/instance size for GLM-4.6 or MiniMax models. → **Action:** Please specify the hardware (GPU type/count, RAM) you expect for teacher inference.
-- **Storage:** Local NVMe on on-prem boxes; assumption is ≥4 TB usable. _If different, please clarify expected capacity + throughput._
+- **Teacher Cloud GPU:** Dedicated cloud instance with **8× A100 (80 GB) or 8× H100 (80 GB)** plus ≥512 GB RAM. Either SKU is acceptable so long as the node can host the teacher stack (MiniMax M2 now preferred) with headroom for concurrent trajectory verification jobs.
+- **Storage:** Local NVMe on on-prem boxes; assumption is ≥4 TB usable dedicated to datasets + checkpoints, mirrored to a local HDD array for cold storage. All dataset artifacts and logs stay on the learner/actor hosts to satisfy the “local only” constraint while still allowing HDD-based archival.
 - **Networking:** Low-latency LAN between learner and actor boxes. Public ingress blocked except for admin SSH/VPN. _If VPN/firewall requirements differ, please confirm._
 
 ## 2. Repository Layout (Week 1–2 additions)
@@ -78,7 +78,7 @@ Each ingestion script writes a `_meta.json` containing:
 - Unit tests ensure detection of missing or malformed fields.
 
 ### 3.2 Ingestion Steps (per dataset)
-1. **Download/Sync** using authenticated URLs when required (AgentPack may need credentials; store in `.env` + use `dotenv`).
+1. **Download/Sync** using authenticated URLs when required (AgentPack may need credentials; store in `.env` + use `dotenv`) directly onto the learner/actor machine’s HDD array (no cloud buckets) so every dataset stays co-located with the GPUs.
 2. **Verify Integrity** via SHA256 + size comparison against official manifest.
 3. **Normalize** into common JSONL structure: `{ "instruction": str, "pre": str, "post": str, "language": str, "tags": [str] }`.
 4. **Store** raw archives untouched under `data/raw/<dataset>/source/` and normalized JSONL under `data/raw/<dataset>/normalized/`.
@@ -94,8 +94,10 @@ Each ingestion script writes a `_meta.json` containing:
 - Include at least 200 synthetic examples/week 1 to unblock sandbox validation.
 
 ### 3.4 Data Versioning & Governance
-- Track `data/raw` via Git LFS or DVC depending on repo policy. Default assumption: **DVC** with remote storage `_UNKNOWN_` → **Action:** specify preferred remote (S3, GCS, on-prem NAS?).
-- Push dataset stats & sample hashes to W&B artifacts for reproducibility.
+- Track `data/raw` and `data/processed` via **DVC** pointing at the learner/actor machine’s local HDD array (e.g., `/mnt/data/dvc`). This keeps every version on-prem while still providing reproducible hashes and the ability to roll back.
+- Each ingestion script ends by `dvc add`-ing the normalized/processed outputs and `dvc push`-ing to the local remote so additions from the cloud teacher runs can be merged incrementally via `dvc pull`.
+- Maintain a manifest `reports/datasets/ingestions.md` logging ingestion events (timestamp, operator, DVC commit SHA) so we can audit when new data arrived.
+- Dataset stats & sample hashes are written to local Markdown reports; we intentionally avoid third-party artifact services per the “local storage” requirement.
 
 ## 4. Sandbox Runner
 ### 4.1 Requirements
@@ -154,8 +156,7 @@ Each ingestion script writes a `_meta.json` containing:
 8. Emit metrics via Prometheus client (`actor_latency`, `sandbox_failures`).
 
 ### 6.3 Observability
-- Logs shipped to Loki/ELK stack (if available) or local JSON logs rotated daily.
-- TODO: confirm log retention policy. _Please clarify if logs must be shipped to a centralized system._
+- Logs written to structured JSON files under `logs/actors/` and `logs/sandbox/`, rotated daily via `logrotate`. No centralized aggregation is required, but the JSON schema mirrors what we would normally ship to Loki so future tooling can ingest it if desired.
 
 ## 7. Trajectory Store (Week-1 implementation)
 - Simple JSONL files under `trajectories/raw/` with schema:
@@ -171,7 +172,7 @@ Each ingestion script writes a `_meta.json` containing:
 }
 ```
 - Later converted to Parquet with additional reward columns once SRL labels exist.
-- Use incremental upload to object storage (remote `_UNKNOWN_`; please advise). 
+- Sync trajectories to the same local DVC remote on the learner box so verified data from cloud teacher runs can be pulled back without relying on third-party object storage.
 
 ## 8. SRL Teacher PoC
 ### 8.1 Prompt Template (`configs/teacher_prompts.yaml`)
@@ -185,7 +186,7 @@ Each ingestion script writes a `_meta.json` containing:
 ### 8.2 Loop (`teachers/srl_teacher.py`)
 1. Sample tasks from processed datasets.
 2. Render prompt with empty or prior state.
-3. Call teacher model (GLM-4.6 or MiniMax).
+3. Call the MiniMax M2 teacher model (fallback: GLM-4.6 only if M2 availability lags).
 4. Parse/validate outputs.
 5. Run sandbox to verify action.
 6. Assign reward labels (`verified=true/false`, diffs, test outcomes).
@@ -194,12 +195,12 @@ Each ingestion script writes a `_meta.json` containing:
 ### 8.3 Evaluation & Targets
 - Collect at least 200 verified steps across languages by end of week 2.
 - Track teacher precision (verified / total) in `reports/teacher/metrics.md`.
-- Unknowns: **Need confirmation** on preferred teacher model weights (GLM-4.6? MiniMax K2?). → please specify priority + license constraints.
+- Track separate metrics per teacher (MiniMax M2 primary, GLM-4.6 fallback) so we can compare yield if we ever have to switch.
 
 ## 9. Security & Compliance Checklist
 - Sandbox uses allowlist of binaries (`ast-grep`, `python`, `pytest`).
 - All downloads hashed; license stored in metadata.
-- Secrets (dataset creds, API keys) stored via `.env` + Vault integration. _Need confirmation_ if Vault or another secret manager is available.
+- Secrets (dataset creds, API keys) stored via git-ignored `.env.local` files on each learner/actor node. Because traffic flows directly between the local machines and the teacher cloud box (no third-party services), we do not need Vault or any external secret manager for this sprint.
 
 ## 10. Week-1/Week-2 Timeline
 | Week | Tasks |
@@ -208,10 +209,4 @@ Each ingestion script writes a `_meta.json` containing:
 | 2 | complete integration tests, deploy vLLM actors, finish actor loop + trajectory store, stand up SRL teacher PoC, collect ≥200 verified trajectories |
 
 ## 11. Open Questions / Clarifications Needed
-1. **Teacher Cloud GPU Specs:** (see §1) → Please specify GPU type/count.
-2. **Data Versioning Remote:** Should DVC push to S3/GCS/on-prem NAS?
-3. **Log Aggregation Requirement:** Do we need to forward actor/sandbox logs to a central system?
-4. **Secrets Management:** Is HashiCorp Vault available, or should we rely on `.env` + git-ignored files?
-5. **Preferred Teacher Model:** Which of GLM-4.6, MiniMax M2, MiniMax K2 Thinking should we prioritize? Any licensing constraints?
-
-Please provide guidance on the unknown items so we can lock the implementation details.
+All previously open questions for week 1–2 are now resolved (teacher hardware, data versioning strategy, logging, secrets, and teacher model priority). Flag any new constraints if they arise, but the plan is otherwise execution-ready.
