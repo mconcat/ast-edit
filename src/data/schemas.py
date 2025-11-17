@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, validator
 
@@ -30,6 +30,10 @@ class NormalizedRecord(BaseModel):
     post: str
     language: Literal["python", "javascript", "typescript", "java", "cpp", "c", "go", "rust", "other"]
     tags: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Dataset-specific structured metadata (tests, provenance, etc.).",
+    )
 
 
 class DatasetConfig(BaseModel):

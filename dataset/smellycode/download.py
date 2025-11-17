@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(REPO_ROOT))
-
-from src.data.download_utils import (  # noqa: E402
+from src.data.download_utils import (
     DownloadError,
     default_content_dir,
     download_http_resource,
@@ -45,10 +41,6 @@ def main() -> None:
     archive_path = dataset_dir / "smellycode_dataset.zip"
     try:
         download_http_resource(args.archive_url, archive_path)
-    except Exception as exc:  # pragma: no cover - network failure
-        raise SystemExit(f"Failed to download archive: {exc}") from exc
-
-    try:
         extract_archive(archive_path, content_dir)
     except DownloadError as exc:
         raise SystemExit(str(exc)) from exc

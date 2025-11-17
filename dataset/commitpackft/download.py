@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.append(str(REPO_ROOT))
-
-from src.data.download_utils import (  # noqa: E402
+from src.data.download_utils import (
     DownloadError,
     default_content_dir,
     finalize_metadata,
