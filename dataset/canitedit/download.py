@@ -13,9 +13,9 @@ from src.data.download_utils import (
 )
 
 DATASET_NAME = "CanItEdit"
-REPO_ID = "opencodeinterpreter/canitedit"
+REPO_ID = "nuprl/CanItEdit"
 DEFAULT_REVISION = "main"
-LICENSE = "Apache-2.0"
+LICENSE = "MIT"
 
 
 def build_parser() -> argparse.ArgumentParser:

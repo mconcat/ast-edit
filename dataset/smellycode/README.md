@@ -21,9 +21,9 @@ Each entry is stored in CSV/JSONL format depending on language split:
 
 | Project Field | Source | Notes |
 | --- | --- | --- |
-| `instruction` | Template `"Remove <smell_type> smell"` optionally plus `notes`. |
-| `pre` | `smelly_code` |
-| `post` | `clean_code` |
-| `language` | `language` (normalized) |
-| `tags` | `["smellycode", smell_type]` |
+| `instruction` | Template `"Remove <smell_type> smell"` optionally plus `notes`. | Combines smell type and optional notes field. |
+| `pre` | `smelly_code` | Raw snippet before refactoring. |
+| `post` | `clean_code` | Refactored version with smell removed. |
+| `language` | `language` (normalized) | Canonical language identifier. |
+| `tags` | `["smellycode", smell_type]` | Dataset name plus smell taxonomy label. |
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, ClassVar, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, validator
 
@@ -19,7 +19,7 @@ class DatasetMetadata(BaseModel):
     num_records: Optional[int] = Field(None, description="Count of normalized records available")
 
     class Config:
-        json_encoders = {datetime: lambda v: v.isoformat()}
+        json_encoders: ClassVar[Dict[type, Any]] = {datetime: lambda v: v.isoformat()}
 
 
 class NormalizedRecord(BaseModel):
@@ -51,7 +51,9 @@ class DatasetConfig(BaseModel):
     homepage: Optional[HttpUrl] = None
 
     @validator("languages", pre=True)
-    def _lowercase_languages(cls, value: List[str]):  # type: ignore[override]
+    def _lowercase_languages(cls, value: Optional[List[str]]):  # type: ignore[override]
+        if value is None:
+            return []
         return [lang.lower() for lang in value]
 
 

@@ -50,7 +50,7 @@ def main() -> None:
 
     meta_path = finalize_metadata(
         dataset_dir=dataset_dir,
-        source=f"{REPO_ID}:{args.subset}",
+        source=f"{REPO_ID}:{args.revision}:{args.subset}",
         version=args.revision,
         license_str=LICENSE,
         artifact_dir=snapshot_path,

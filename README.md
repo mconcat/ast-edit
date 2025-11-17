@@ -25,7 +25,7 @@ Each downloader stages files under `dataset/<name>/content/` and writes `_meta.j
 
 Some download scripts require authenticated access (e.g., private Hugging Face mirrors). Provide credentials via environment variables or an untracked `.env.local` file at the repo root:
 
-```
+```bash
 HF_TOKEN=hf_xxx
 CUSTOM_S3_ENDPOINT=https://...
 ```
