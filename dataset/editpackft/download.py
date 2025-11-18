@@ -13,7 +13,7 @@ from src.data.download_utils import (
 )
 
 DATASET_NAME = "EditPackFT"
-REPO_ID = "opencodeinterpreter/editpackft"
+REPO_ID = "nuprl/EditPackFT"
 DEFAULT_REVISION = "main"
 SUBSET = None
 LICENSE = "BigCode-OpenRAIL-M"
@@ -60,4 +60,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

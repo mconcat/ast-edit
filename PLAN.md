@@ -223,7 +223,7 @@ repo/
   data/
     raw/                       # immutable source datasets
     processed/{train,dev,test}/
-    scripts/ingest_{commitpackft,oce,editpackft,marv,smelly}.py
+    scripts/ingest_{commitpackft,editpackft,smelly}.py
   srl/
     make_trajs.py              # teacher loop (GLM-4.6/M2...)
     reward_srl.py              # action-similarity reward (fields+string)
@@ -439,4 +439,3 @@ Appendix — Key References
 	•	TRL: GRPO & vLLM (online RL, server‑mode rollouts).
 	•	Datasets: CommitPack/CommitPackFT, OCEDataFT (OpenCodeEdit), CanItEdit + EditPackFT, AgentPack, MaRV, SmellyCodeDataset.
 	•	ast‑grep docs: rewrite via CLI/YAML; pattern syntax; CLI reference.
-

@@ -14,7 +14,7 @@ from src.data.download_utils import (
 )
 
 DATASET_NAME = "AgentPack"
-REPO_ID = "opencodeinterpreter/agentpack"
+REPO_ID = "nuprl/AgentPack"
 DEFAULT_REVISION = "main"
 LICENSE = "CC-BY-SA-4.0"
 
@@ -69,4 +69,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

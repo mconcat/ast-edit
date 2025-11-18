@@ -1,0 +1,22 @@
+# Minimal sandbox configuration
+# Keep this simple; no heavy jailers by default.
+
+work_root: .sandbox
+logs_dir: logs/sandbox
+
+# Execution limits
+default_timeout_sec: 30
+cpu_time_sec: 20
+mem_limit_mb: 4096
+
+# Allowed binaries for `apply_action`/`run_tests`
+allowed_binaries:
+  - ast-grep
+  - sg
+  - python
+  - pytest
+
+# Jailer is optional; disabled by default to keep harness simple
+enable_jail: false
+jailer: none  # options: none, nsjail, firejail (not used when enable_jail is false)
+

@@ -27,7 +27,9 @@ reports/datasets/*
 dataset/*/content/
 !dataset/*/content/.gitkeep
 
+# Per-machine dataset storage config
+configs/dataset_storage.local.yaml
+
 # Local tooling
 .mypy_cache/
 .pytest_cache/
-

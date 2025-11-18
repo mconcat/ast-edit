@@ -14,7 +14,7 @@ from src.data.download_utils import (
 )
 
 DATASET_NAME = "SmellyCodeDataset"
-ARCHIVE_URL = "https://github.com/smellycode/SmellyCodeDataset/archive/refs/heads/main.zip"
+ARCHIVE_URL = "https://github.com/HRI-EU/SmellyCodeDataset/archive/refs/heads/main.zip"
 LICENSE = "GPL-3.0-only"
 DEFAULT_VERSION = "github-main"
 
@@ -58,4 +58,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

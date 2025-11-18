@@ -15,14 +15,18 @@ from src.data.download_utils import (
 DATASET_NAME = "CommitPackFT"
 REPO_ID = "bigcode/commitpackft"
 DEFAULT_REVISION = "main"
-SUBSET = "filtered"
+DEFAULT_SUBSET = None  # use full snapshot by default
 LICENSE = "BigCode-OpenRAIL-M"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--revision", default=DEFAULT_REVISION)
-    parser.add_argument("--subset", default=SUBSET)
+    parser.add_argument(
+        "--subset",
+        default=DEFAULT_SUBSET,
+        help="Optional subset folder under the snapshot (leave empty to use full snapshot).",
+    )
     parser.add_argument("--metadata-only", action="store_true", help="Print expected actions without downloading")
     parser.add_argument("--num-records", type=int, default=None, help="Override num_records metadata if known")
     parser.add_argument(
@@ -56,9 +60,13 @@ def main() -> None:
     except DownloadError as exc:
         raise SystemExit(str(exc)) from exc
 
+    source = f"{REPO_ID}:{args.revision}"
+    if args.subset:
+        source = f"{source}:{args.subset}"
+
     meta_path = finalize_metadata(
         dataset_dir=dataset_dir,
-        source=f"{REPO_ID}:{args.revision}:{args.subset}",
+        source=source,
         version=args.revision,
         license_str=LICENSE,
         artifact_dir=snapshot_path,
@@ -69,4 +77,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

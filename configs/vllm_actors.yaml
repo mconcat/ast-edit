@@ -1,0 +1,25 @@
+# Minimal configuration for vLLM actors.
+# This is intentionally small and easy to change locally.
+
+actors:
+  - name: actor0
+    base_url: http://127.0.0.1:8000
+    model: qwen2-14b-instruct
+    tensor_parallel_size: 1
+    gpu_id: 0
+
+  - name: actor1
+    base_url: http://127.0.0.1:8001
+    model: qwen2-14b-instruct
+    tensor_parallel_size: 1
+    gpu_id: 1
+
+  - name: actor2
+    base_url: http://127.0.0.1:8002
+    model: qwen2-14b-instruct
+    tensor_parallel_size: 1
+    gpu_id: 2
+
+timeout_sec: 60
+max_tokens: 512
+
