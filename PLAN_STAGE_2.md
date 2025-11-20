@@ -17,6 +17,7 @@ Stage 2 implements **Supervised Reinforcement Learning (SRL)** as described in t
 - Stage 1 artifacts: sandbox runner (`src/sandbox/runner.py`), state manager (PLAN.md §5 schema), task manifests under `data/processed/{train,dev,test}/`.
 - Hardware: cloud GPU box (teacher: ≈100B with ≥8k context), on-prem 2×5090 for SRL training.
 - Access to teacher API or vLLM serving; configs stored in `configs/teacher.yaml`.
+- Directory skeleton (create if missing): `trajectories/raw/teacher/`, `data/processed/srl/`, `reports/teacher/`, `reports/srl/`, `reports/training/`, `models/srl_stage2/`, `configs/` for shared configs.
 
 ## 2) Teacher Setup & Prompting (Cloud)
 1. **Serve the teacher**
@@ -100,13 +101,74 @@ Implement `src/srl/train_trace_srl.py` following the SRL paper’s objective: op
 - Evaluation:
   - `python scripts/eval_srl_traces.py --model models/srl_stage2/best --data data/processed/srl/dev.jsonl --report reports/training/stage2.md`
 
-## 8) Risk & Mitigation (SRL-specific)
+## 8) Configuration Templates (examples)
+- `configs/teacher.yaml` (minimum fields; extend per provider):
+  ```yaml
+  teacher_name: "Qwen3-235B-Thinking"  # used for stratified analysis
+  provider: vllm
+  model: qwen/qwen3-235b-instruct
+  endpoint: http://teacher-host:8000/v1/completions
+  api_key: "${TEACHER_API_KEY}"
+  generation:
+    temperature: 0.3
+    top_p: 0.9
+    max_tokens: 1024
+    stop: ["</state_update>"]
+  logging:
+    shard_size: 500
+    out_dir: trajectories/raw/teacher/
+  safety:
+    max_think_tokens: 512
+    enforce_tags: true
+  ```
+- `configs/accelerate.yaml` (2×5090 example):
+  ```yaml
+  compute_environment: LOCAL_MACHINE
+  distributed_type: MULTI_GPU
+  num_processes: 2
+  mixed_precision: bf16
+  machine_rank: 0
+  main_process_ip: null
+  main_process_port: 29500
+  main_training_function: main
+  ```
+- `configs/train_srl.yaml` (trainer hyperparams referenced in scripts):
+  ```yaml
+  model_name: Qwen/Qwen2.5-14B-Instruct
+  lora:
+    r: 64
+    alpha: 16
+    dropout: 0.05
+  data:
+    train_path: data/processed/srl/train.jsonl
+    dev_path: data/processed/srl/dev.jsonl
+    max_length: 4096
+  reward_weights:
+    w_action: 1.0
+    w_state: 0.0
+    w_think: 0.0
+  grpo:
+    num_generations: 4
+    reward_std_threshold: 0.05
+    kl_lambda: 0.02
+  optimization:
+    lr: 5e-6
+    weight_decay: 0.1
+    warmup_steps: 500
+    total_steps: 20000
+    grad_accum: 8
+  logging:
+    out_dir: reports/srl/
+    checkpoint_dir: models/srl_stage2/
+  ```
+
+## 9) Risk & Mitigation (SRL-specific)
 - **Teacher drift/verbosity**: enforce token caps, regex validation; auto-truncate `<think>`; reject missing tags.
 - **Low-quality traces**: strict execution + quality gates; manual spot checks on rejections to tune heuristics.
 - **Student overfitting to `<think>` style**: KL anchor + brevity penalty; shuffle prompts to reduce positional bias.
 - **Tool failures**: sandbox timeouts treated as hard negatives; add retry + jitter for teacher calls.
 
-## 9) Checklist for Stage 3 Readiness
+## 10) Checklist for Stage 3 Readiness
 - SRL datasets versioned; schema frozen in `src/srl/schema.py`.
 - Best SRL checkpoint exports tokenizer + special tokens; inference parses tags correctly.
 - Reports show stable reward/KL and successful execution; token budgets respected.
