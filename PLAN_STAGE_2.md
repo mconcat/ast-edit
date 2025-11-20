@@ -38,7 +38,7 @@ Stage 2 implements **Supervised Reinforcement Learning (SRL)** as described in t
    - After each teacher action, call `src/sandbox/runner.py` to apply ast-grep and capture diffs/tests. Persist `env_report` with the model output.
 
 ## 3) Trajectory Schema & Storage
-- JSONL per step under `trajectories/raw/teacher/` with fields: `task_id`, `source`, `split`, `input`, `state_in`, `model_output`, `think`, `action`, `state_update`, `env_report`, `timestamp`, `teacher_config`.
+- JSONL per step under `trajectories/raw/teacher/` with fields: `task_id`, `source`, `split`, `input`, `state_in`, `model_output`, `think`, `action`, `state_update`, `env_report`, `timestamp`, `teacher_config` (include `teacher_name` for later stratified analysis when mixing teachers).
 - Add `src/srl/schema.py` validator: enforce required tags, `<think>` ≤512 tokens, allowed `state_update` keys, and action schema (PLAN.md §11.1).
 
 ## 4) Filtering & QA Pipeline
@@ -55,7 +55,7 @@ Implement `src/srl/make_trajs.py`:
    - `S_action`: sandbox success (1/0) plus field-level validity.
    - `S_state`: coverage of constraints/decisions mentioned in `<think>` vs `state_update` (keyword overlap heuristic).
    - `S_think`: presence of rationale for pattern choice and safety checks; brevity score vs length budget.
-   - Keep `trace_quality >= 0.6`; log rejections to `reports/teacher/rejections.md`.
+   - Keep `trace_quality >= 0.6`; start with loose thresholds to avoid overfitting heuristics; log rejections to `reports/teacher/rejections.md` for later tightening.
 5. **Output** cleaned SRL datasets to `data/processed/srl/train.jsonl` and `dev.jsonl` with per-source stats in `reports/teacher/metrics.md`.
 
 ## 5) SRL Training Pipeline (Paper-faithful GRPO SRL)
@@ -64,18 +64,19 @@ Implement `src/srl/train_trace_srl.py` following the SRL paper’s objective: op
    - Base: Qwen3-14B (or smaller dev checkpoint) with LoRA/QLoRA adapters. Special tokens for `<think>`, `<action>`, `<state_update>`.
 2. **Dataset loader**
    - Stream `data/processed/srl/train.jsonl` with fields `prompt` (system + state + user), `teacher_think`, `teacher_action`, `teacher_state_update`.
-   - Target output = concatenated tagged blocks (matches teacher trace order).
+   - Student always generates its own `<think>/<action>/<state_update>`; no cross-entropy on teacher tokens. Teacher fields are used for reward computation only (per SRL), not for supervised targets.
 3. **Reward function `reward_trace` (paper-aligned components)**
    - Parse student output into blocks; malformed → reward = -0.2 (paper’s penalty for invalid trajectory).
    - `R_action`: field-level F1 + edit distance vs teacher action (weight highest per paper emphasis on action fidelity).
    - `R_state`: Jaccard overlap on list fields in `state_update`, with higher weight on `constraints/decisions` to reflect state-faithfulness term.
    - `R_think`: semantic similarity (MiniLM embeddings) between `<think>` blocks with brevity penalty if length >1.5× teacher (mirrors paper’s compression regularizer).
-   - Combine as `R_total = 0.5*R_action + 0.3*R_state + 0.2*R_think`, clip to [−0.2, 1.0].
+   - Combine as `R_total = w_action*R_action + w_state*R_state + w_think*R_think`, clip to [−0.2, 1.0]; **default v1**: `w_action=1.0, w_state=0.0, w_think=0.0` (action-only SRL), with state/think rewards as configurable Phase 2 knobs for ablations.
+   - Log `R_state`/`R_think` even when weighted to zero to enable later analysis and ablations without code changes.
    - **KL anchor**: add λ·KL(student || base) as in GRPO to prevent divergence (paper’s stability requirement); tune λ via dev set.
 4. **Optimization loop (GRPO-style)**
-   - For each batch: generate student trace with stop tokens at `</state_update>`; compute `R_total`; compute **generalized advantage** using paper’s advantage estimator (reward minus KL-adjusted baseline); update via PPO-style clipped objective.
-   - Gradient accumulation to reach effective batch ≈64; sequence length 4k; LR 5e-6 (LoRA) or 1e-5 (full fine-tune); cosine decay, warmup 5%.
-   - Log reward components, KL, and token usage to `reports/srl/` (or W&B/MLflow).
+   - Hyperparams: `num_generations (G)=4`, `reward_std_threshold τ=0.05` for dynamic sampling, `max_seq_len=4k`, gradient accumulation to effective batch ≈64; LR 5e-6 (LoRA) or 1e-5 (full), cosine decay, warmup 5%.
+   - For each prompt group: sample **G** student traces with stop at `</state_update>`; compute rewards `r_i`; compute group mean/std; if `std(r) < τ`, skip the group (paper’s dynamic rejection); else compute group-normalized advantages `Â_i = (r_i - mean(r))/std(r)` and apply GRPO (PPO-clipped) update with KL anchor.
+   - Log reward components, KL, token usage, and rejection rate to `reports/srl/` (or W&B/MLflow). Optionally note EMA-KL anchor (M-GRPO) as future extension.
 5. **Evaluation during training**
    - Periodically score on `data/processed/srl/dev.jsonl` using the same reward and sandbox execution success; save best checkpoint by `R_total` + success.
 6. **Checkpointing**
@@ -85,6 +86,7 @@ Implement `src/srl/train_trace_srl.py` following the SRL paper’s objective: op
 - `scripts/eval_srl_traces.py`:
   - Run best student checkpoint on held-out dev tasks.
   - Metrics: `R_total` vs teacher, execution success rate, tag parsing success, average `<think>`/`<state_update>` length.
+  - Stratify metrics by language (Python/JS/Java), avg steps per task, and trace length distribution to detect skew.
   - Compare against teacher (upper bound) and base model without SRL (lower bound).
 - Summarize in `reports/training/stage2.md`: data volumes/accept rates, reward + KL curves, execution success, token budgets; lessons for Stage 3 online GRPO.
 
