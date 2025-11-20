@@ -1,100 +1,111 @@
-# Week 3–4 Chronological Implementation Plan
+# Stage 2 Plan — Supervised Reinforcement Learning (Trace Distillation for AST-grab)
 
-This is the Week 3–4 plan rewritten as a strictly ordered sequence of work. It focuses on turning the Stage‑1 infrastructure into a working training pipeline: Stage 0/1 SFT plus an initial SRL trainer run.
+Stage 2 implements **Supervised Reinforcement Learning (SRL)** as described in the 2024 SRL paper (trace imitation via GRPO-style policy optimization on teacher rollouts). We **remove SFT** entirely: the student policy is trained to follow the **teacher’s intermediate reasoning and state transitions** captured from AST-grab tasks. The plan below is implementation-ready and scoped to SRL only.
 
-## 0. Scope & Success Criteria
-- Goal: Build and exercise the first end‑to‑end training loops on top of the Stage‑1 infra: (a) supervised fine‑tuning on text edits and ast‑grep formats, and (b) a small offline SRL run on verified teacher trajectories.
-- Success criteria:
-  - Normalized SFT datasets (text edits + ast‑grep formats) exist under `data/processed/{train,dev,test}/` with schema validation and basic stats.
-  - Stage 0 SFT: a Qwen3‑14B (or smaller dev model) can be fine‑tuned to map instructions + pre‑code → post‑code, with saved checkpoints and eval metrics.
-  - Stage 1 SFT: a model can be fine‑tuned to map instructions + pre‑code → ast‑grep actions (YAML/CLI), validated by applying rules offline.
-  - SRL: a trainer runs over teacher trajectories with an action‑similarity reward, producing a new checkpoint and basic reward/accuracy curves.
-  - All training scripts are reproducible from config (no hard‑coded paths), and can run on a single box (2×5090) without manual hacks.
+## 0) Scope & Success Criteria
+- Deliverables
+  - Cloud-hosted teacher that streams `<think>/<action>/<state_update>` traces for AST-grab tasks into `trajectories/raw/teacher/`.
+  - Filtering pipeline that validates actions in the sandbox and emits SRL-ready JSONL traces under `data/processed/srl/{train,dev}.jsonl`.
+  - SRL trainer (GRPO-style objective from the paper) that optimizes the student on offline traces; checkpoints in `models/srl_stage2/`, logs in `reports/srl/`.
+  - Eval scripts comparing student vs teacher on held-out tasks (execution success + trace similarity).
+- Success criteria
+  - ≥10k verified teacher steps with valid tags and passing sandbox validation.
+  - Student execution success on held-out tasks ≥90% of teacher success, with `<think>` and `<state_update>` tokens ≤800 per block.
+  - Reproducible runs from config; one command per stage (teacher batch, filtering, SRL train, eval) runs end-to-end on 2×5090.
 
-## 1) Normalize & Split Datasets for SFT
-- Implement ingestion/normalization scripts (or finish stubs) to convert raw sources into `NormalizedRecord` instances:
-  - `scripts/ingest_commitpackft.py`, `scripts/ingest_editpackft.py`, `scripts/ingest_smellycode.py`.
-  - Use `src/data/schemas.NormalizedRecord` and `DatasetMetadata` for all outputs.
-- Write normalized JSONL under:
-  - `data/processed/train/*.jsonl`
-  - `data/processed/dev/*.jsonl`
-  - `data/processed/test/*.jsonl`
-- Add a simple validation/stats script (extend `scripts/report_dataset_stats.py`) to check:
-  - Required fields present; languages normalized.
-  - Record counts per split and per source.
-  - Rough size in GB so training configs can set expectations.
+## 1) Prerequisites & Inputs
+- Stage 1 artifacts: sandbox runner (`src/sandbox/runner.py`), state manager (PLAN.md §5 schema), task manifests under `data/processed/{train,dev,test}/`.
+- Hardware: cloud GPU box (teacher: ≈100B with ≥8k context), on-prem 2×5090 for SRL training.
+- Access to teacher API or vLLM serving; configs stored in `configs/teacher.yaml`.
 
-## 2) Stage 0 SFT – Text Edit Behavior
-- Define a data mix for Stage 0 SFT (text edits only):
-  - CommitPackFT (~60%), EditPackFT (~40%) as per PLAN (adjusted to current dataset mix).
-- Implement a training script, e.g. `src/training/train_sft_stage0.py`:
-  - Loads processed JSONL datasets, builds prompts of the form:
-    - `[system]` editing/refactoring behavior
-    - `[user]` instruction + pre‑code
-    - `[assistant]` post‑code
-  - Uses HF Transformers + Accelerate/DeepSpeed YAML configs from `configs/accelerate.yaml`.
-  - Supports LoRA/QLoRA and checkpointing into `models/sft_stage0/`.
-- Add a small evaluation routine:
-  - Hold‑out OCE/CanItEdit tasks.
-  - Log exact string match and basic code similarity metrics.
-- Document a single command that runs Stage 0 SFT on a single machine (2×5090 or smaller dev setup).
+## 2) Teacher Setup & Prompting (Cloud)
+1. **Serve the teacher**
+   - Launch vLLM/provider with long context (≥8k), `temperature≈0.3`, `top_p=0.9`, logprobs off. Pin version in `configs/teacher.yaml`.
+2. **Prompt contract (paper-aligned trace tags)**
+   - System: ast-grep refactoring agent that must emit tagged reasoning + action + state update.
+   - Inputs: prior `<state>` (compact JSON), user instruction + pre-code, and any feedback from sandbox/tests.
+   - Required output format:
+     ```
+     <think>stepwise rationale that justifies the chosen AST pattern and safety checks</think>
+     <action>{normalized ast_grep action JSON}</action>
+     <state_update>{"decisions":[], "constraints":[], "open_issues":[], "next_focus":[]}</state_update>
+     ```
+   - Enforce concise `<think>`; reject missing/misordered tags.
+3. **Task sampling**
+   - Balance Python/JS/Java tasks from Stage 1 plus any synthetic AST-grab tasks under `dataset/astgrep_synth/*.jsonl`.
+   - Run `scripts/run_teacher_batch.py` to stream tasks and write shards to `trajectories/raw/teacher/{date}/shard_*.jsonl`.
+4. **Execution check**
+   - After each teacher action, call `src/sandbox/runner.py` to apply ast-grep and capture diffs/tests. Persist `env_report` with the model output.
 
-## 3) Stage 1 SFT – ast‑grep Action Format
-- Prepare training data that maps tasks to ast‑grep actions:
-  - Synthetic codemods (from `scripts/synth_astgrep_rules.py` once filled in).
-  - Simple OCE/CommitPackFT tasks manually or heuristically converted to ast‑grep rules.
-  - ast‑grep docs/examples normalized into the action schema from PLAN §11.1.
-- Implement a second training script, e.g. `src/training/train_sft_stage1_astgrep.py`:
-  - Input: instruction + pre‑code (+ optional prior `<state>` snippet).
-  - Target: `<think>/<action>/<state_update>` or just `<action>` block containing the normalized ast‑grep action JSON/YAML.
-  - Reuse the same model/config stack as Stage 0 (perhaps with a smaller LR and shorter contexts).
-- Add an offline validator:
-  - For a small eval set, run the model, parse the emitted action, and apply it via the sandbox (`src/sandbox/runner.py`).
-  - Log success rate (# of tasks where applying the action produces the expected post‑code or passes tests).
-- Save Stage 1 SFT checkpoints under `models/sft_stage1_astgrep/` with a simple README summarizing data and hyperparameters.
+## 3) Trajectory Schema & Storage
+- JSONL per step under `trajectories/raw/teacher/` with fields: `task_id`, `source`, `split`, `input`, `state_in`, `model_output`, `think`, `action`, `state_update`, `env_report`, `timestamp`, `teacher_config`.
+- Add `src/srl/schema.py` validator: enforce required tags, `<think>` ≤512 tokens, allowed `state_update` keys, and action schema (PLAN.md §11.1).
 
-## 4) Scale Up Teacher Trajectory Collection
-- Move from the Stage‑1 SRL PoC to a more systematic teacher trajectory collection:
-  - Add a CLI or small orchestrator around `src/teachers/srl_teacher.py` (e.g. `scripts/run_teacher_batch.py`) that:
-    - Reads a list of tasks from a JSONL manifest.
-    - Runs the teacher model via `VLLMClient` or a remote API.
-    - Writes raw trajectories under `trajectories/raw/teacher/`.
-- Add a filtering/cleanup script, e.g. `src/srl/make_trajs.py`:
-  - Reads raw teacher trajectories.
-  - Verifies actions via the sandbox (already wired).
-  - Keeps only verified steps; drops invalid JSON, failed actions, or low‑reward steps.
-  - Writes cleaned SRL datasets under `data/processed/srl/{train,dev}.jsonl`.
-- Target: 10–20k verified teacher steps by the end of Week 4, with per‑dataset stats written to `reports/teacher/metrics.md` (extending the existing teacher metrics script).
+## 4) Filtering & QA Pipeline
+Implement `src/srl/make_trajs.py`:
+1. **Parse & normalize** teacher text into structured objects via the state manager and ast-grep action schema.
+2. **Validity gates**
+   - JSON-parseable `<action>` with allowed fields; no empty patterns.
+   - `<state_update>` only {`decisions`, `constraints`, `open_issues`, `next_focus`}; dedupe + truncate.
+   - `<think>` non-empty and within token budget.
+3. **Execution gates**
+   - `env_report.ok == true` AND (tests passed OR diff matches expected post-code when provided).
+   - Drop steps with stderr timeouts or schema violations.
+4. **Quality scoring** (store `trace_quality`)
+   - `S_action`: sandbox success (1/0) plus field-level validity.
+   - `S_state`: coverage of constraints/decisions mentioned in `<think>` vs `state_update` (keyword overlap heuristic).
+   - `S_think`: presence of rationale for pattern choice and safety checks; brevity score vs length budget.
+   - Keep `trace_quality >= 0.6`; log rejections to `reports/teacher/rejections.md`.
+5. **Output** cleaned SRL datasets to `data/processed/srl/train.jsonl` and `dev.jsonl` with per-source stats in `reports/teacher/metrics.md`.
 
-## 5) Implement SRL Reward & Trainer
-- Implement an action‑similarity reward module, e.g. `src/srl/reward_srl.py`:
-  - Parse teacher and student actions into the normalized schema.
-  - Compute `S_field` (field‑level match score) and `S_str` (string similarity on `rule_yaml`/`cli`).
-  - Combine into `R_srl = 0.7 * S_field + 0.3 * S_str`, clipped to [−0.2, 1.0], with −0.2 for invalid actions (as in PLAN §12.1).
-- Implement an offline SRL trainer, e.g. `src/srl/train_srl.py`:
-  - Loads teacher trajectories and the Stage 1 SFT model as a starting point.
-  - Uses TRL or a lightweight RL loop to train on action‑only reward:
-    - Student generates actions for each teacher state.
-    - `reward_srl` computes per‑step reward.
-    - Optimizer updates the policy toward teacher‑like actions.
-  - Writes checkpoints to `models/srl_stage2/` and logs reward/accuracy curves (e.g. into `reports/srl/` or W&B/MLflow).
-- Provide a one‑command SRL training entrypoint (documented in a short README under `src/srl/`).
+## 5) SRL Training Pipeline (Paper-faithful GRPO SRL)
+Implement `src/srl/train_trace_srl.py` following the SRL paper’s objective: optimize a policy on **teacher rollouts** using a GRPO-like loss that maximizes reward for matching teacher actions + intermediate reasoning while regularizing toward the base model.
+1. **Model init**
+   - Base: Qwen3-14B (or smaller dev checkpoint) with LoRA/QLoRA adapters. Special tokens for `<think>`, `<action>`, `<state_update>`.
+2. **Dataset loader**
+   - Stream `data/processed/srl/train.jsonl` with fields `prompt` (system + state + user), `teacher_think`, `teacher_action`, `teacher_state_update`.
+   - Target output = concatenated tagged blocks (matches teacher trace order).
+3. **Reward function `reward_trace` (paper-aligned components)**
+   - Parse student output into blocks; malformed → reward = -0.2 (paper’s penalty for invalid trajectory).
+   - `R_action`: field-level F1 + edit distance vs teacher action (weight highest per paper emphasis on action fidelity).
+   - `R_state`: Jaccard overlap on list fields in `state_update`, with higher weight on `constraints/decisions` to reflect state-faithfulness term.
+   - `R_think`: semantic similarity (MiniLM embeddings) between `<think>` blocks with brevity penalty if length >1.5× teacher (mirrors paper’s compression regularizer).
+   - Combine as `R_total = 0.5*R_action + 0.3*R_state + 0.2*R_think`, clip to [−0.2, 1.0].
+   - **KL anchor**: add λ·KL(student || base) as in GRPO to prevent divergence (paper’s stability requirement); tune λ via dev set.
+4. **Optimization loop (GRPO-style)**
+   - For each batch: generate student trace with stop tokens at `</state_update>`; compute `R_total`; compute **generalized advantage** using paper’s advantage estimator (reward minus KL-adjusted baseline); update via PPO-style clipped objective.
+   - Gradient accumulation to reach effective batch ≈64; sequence length 4k; LR 5e-6 (LoRA) or 1e-5 (full fine-tune); cosine decay, warmup 5%.
+   - Log reward components, KL, and token usage to `reports/srl/` (or W&B/MLflow).
+5. **Evaluation during training**
+   - Periodically score on `data/processed/srl/dev.jsonl` using the same reward and sandbox execution success; save best checkpoint by `R_total` + success.
+6. **Checkpointing**
+   - Save to `models/srl_stage2/step_{N}` with a `README.md` describing data version, reward weights, and hardware.
 
-## 6) Evaluation & Reporting for Stage 2
-- Add or extend evaluation scripts to quantify the benefits of SFT + SRL:
-  - `eval_canitedit.py`:
-    - Runs both SFT‑only and SFT+SRL models on the CanItEdit benchmark.
-    - Reports success rate, ExcessCode, and average number of rules per task.
-  - Simple regression eval on a held‑out subset of OCE/CommitPackFT.
-- Add a Stage‑2 report under `reports/training/stage2.md`:
-  - Data used (sources, record counts, splits).
-  - SFT Stage 0/1 config summaries and key metrics.
-  - SRL run details (steps, reward curves, best checkpoint).
-  - Short “lessons learned” / open issues to feed into the GRPO (Stage 3) plan.
+## 6) Evaluation & Reporting
+- `scripts/eval_srl_traces.py`:
+  - Run best student checkpoint on held-out dev tasks.
+  - Metrics: `R_total` vs teacher, execution success rate, tag parsing success, average `<think>`/`<state_update>` length.
+  - Compare against teacher (upper bound) and base model without SRL (lower bound).
+- Summarize in `reports/training/stage2.md`: data volumes/accept rates, reward + KL curves, execution success, token budgets; lessons for Stage 3 online GRPO.
 
-## 7) Readiness for Stage 3 (GRPO) – Checklist
-- Confirm:
-  - Stage 1 SFT + Stage 2 SRL checkpoints are saved and loadable by TRL/Transformers.
-  - Clean SRL trajectories with the schema in PLAN §6 are available and versioned (even if just via git for now).
-  - Sandbox/state manager/actors are stable under light load and ready to be called from GRPO rollouts.
-  - Hardware configuration and DeepSpeed/Accelerate YAMLs have been smoke‑tested with a tiny GRPO run (even if Stage 3 proper is deferred).
+## 7) One-Command Entry Points
+- Teacher batch (cloud):
+  - `python scripts/run_teacher_batch.py --config configs/teacher.yaml --tasks data/processed/train/tasks.jsonl --out trajectories/raw/teacher/$(date +%F)/`
+- Trace cleaning:
+  - `python -m src.srl.make_trajs --in trajectories/raw/teacher/$(date +%F) --out data/processed/srl --report reports/teacher/metrics.md`
+- SRL training:
+  - `accelerate launch --config_file configs/accelerate.yaml -m src.srl.train_trace_srl --data data/processed/srl/train.jsonl --dev data/processed/srl/dev.jsonl --output models/srl_stage2`
+- Evaluation:
+  - `python scripts/eval_srl_traces.py --model models/srl_stage2/best --data data/processed/srl/dev.jsonl --report reports/training/stage2.md`
+
+## 8) Risk & Mitigation (SRL-specific)
+- **Teacher drift/verbosity**: enforce token caps, regex validation; auto-truncate `<think>`; reject missing tags.
+- **Low-quality traces**: strict execution + quality gates; manual spot checks on rejections to tune heuristics.
+- **Student overfitting to `<think>` style**: KL anchor + brevity penalty; shuffle prompts to reduce positional bias.
+- **Tool failures**: sandbox timeouts treated as hard negatives; add retry + jitter for teacher calls.
+
+## 9) Checklist for Stage 3 Readiness
+- SRL datasets versioned; schema frozen in `src/srl/schema.py`.
+- Best SRL checkpoint exports tokenizer + special tokens; inference parses tags correctly.
+- Reports show stable reward/KL and successful execution; token budgets respected.
+- Actor/sandbox stack ready for online GRPO rollouts.
